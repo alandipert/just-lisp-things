@@ -123,13 +123,12 @@ its value. Template variables are post metadata keys wrapped with
 dollar signs, like $this$."
   (with-temp-buffer
     (insert-file-contents-literally template-file)
-    (dolist (pair alist)
+    (dolist (pair alist (buffer-string))
       (cl-destructuring-bind (varname . val) pair
 	(let ((to-find (concat "\\$" (symbol-name varname) "\\$")))
 	  (goto-char (point-min))
 	  (while (re-search-forward to-find nil t)
-	    (replace-match val)))))
-    (buffer-string)))
+	    (replace-match val)))))))
 
 (cl-defun blog-command-index (posts-dir template-index template-listing)
   "Generates the blog index page."
