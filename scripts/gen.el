@@ -3,7 +3,6 @@
 (setq debug-on-error t
       dired-use-ls-dired nil)
 
-(require 'avl-tree)
 (require 'cl-lib)
 (require 'json)
 (require 'parse-time)
@@ -75,45 +74,37 @@ returns the result of body."
         "-V" (format "reading-time='%s'" (reading-time file))
         file)))
 
-(cl-defun post-before? (x y)
-  "True when post x has an 'internal time' time property that
-precedes that of post y."
-  (apply #'time-less-p (mapcar (apply-partially #'alist-get 'time) (list x y))))
-
 (cl-defun replace-extension (filename new-ext)
   "Replaces the extension of filename with new-ext."
   (concat (file-name-sans-extension filename) "." new-ext))
 
-(cl-defun complement (func)
-  "Returns the complement of predicate func."
-  (lambda (&rest args)
-    (not (apply func args))))
-
-(cl-defun sorted-posts (posts-dir compare-func &aux (avl-tree (avl-tree-create compare-func)))
-  "Provided a directory of posts and a function to compare them
-by, returns an avl tree of the posts sorted by compare-func.
-Posts are alists various properties given by the path to
-posts-dir and the metadata in the posts."
-  (dolist (post (directory-files posts-dir nil "\\.md$" t) avl-tree)
-    (let* ((md-path (concat (file-name-as-directory posts-dir) post))
-           (meta (json-read-from-string (blog-command-meta-json md-path)))
-           (time (parse-iso-date (alist-get 'date meta))))
-      (avl-tree-enter avl-tree
-                      `((path . ,(replace-extension md-path "html"))
-                        (title . ,(alist-get 'title meta))
-                        (iso-date . ,(format-time-string "%FT%TZ" time))
-                        (id . ,(alist-get 'id meta))
-                        (abstract . ,(alist-get 'abstract meta))
-                        (short-iso-date . ,(format-time-string "%F" time))
-                        (time . ,time))))))
+(cl-defun posts (posts-dir)
+  "Returns a list of alists of post metadata, in chronological order."
+  (cl-sortn
+   (mapcar (lambda (post)
+	     (let* ((md-path (concat (file-name-as-directory posts-dir) post))
+		    (meta (json-read-from-string (blog-command-meta-json md-path)))
+		    (time (parse-iso-date (alist-get 'date meta))))
+	       `((path . ,(replace-extension md-path "html"))
+		 (title . ,(alist-get 'title meta))
+		 (iso-date . ,(format-time-string "%FT%TZ" time))
+		 (id . ,(alist-get 'id meta))
+		 (abstract . ,(alist-get 'abstract meta))
+		 (short-iso-date . ,(format-time-string "%F" time))
+		 (time . ,time))))
+	   (directory-files posts-dir nil "\\.md$" t))
+   #'time-less-p
+   :key (apply-partially #'alist-get 'time)))
 
 (cl-defun render-attrs (attrs)
+  "Renders a particular node's attribute list."
   (mapconcat (lambda (pair)
                (format "%s=\"%s\"" (car pair) (cdr pair)))
              attrs
              " "))
 
 (cl-defun render-html (dom)
+  "Returns a string of HTML/XML markup provided a tree."
   (if (stringp dom)
       dom
     (cl-destructuring-bind (tag attrs &rest kids) dom
@@ -125,24 +116,31 @@ posts-dir and the metadata in the posts."
                 (mapconcat #'render-html kids "")
                 tag)))))
 
-(cl-defun index-post-entry (post)
-  `(li nil
-       (time ((datetime . ,(alist-get 'iso-date post)))
-             ,(alist-get 'short-iso-date post))
-       "&nbsp;"
-       (a ((href . ,(alist-get 'path post)))
-          ,(alist-get 'title post))))
+(cl-defun fill-template (template-file alist)
+  "Given a template file and an alist of substitutions to
+perform, substitute every occurrence of a template variable with
+its value. Template variables are post metadata keys wrapped with
+dollar signs, like $this$."
+  (with-temp-buffer
+    (insert-file-contents-literally template-file)
+    (dolist (pair alist)
+      (cl-destructuring-bind (varname . val) pair
+	(let ((to-find (concat "\\$" (symbol-name varname) "\\$")))
+	  (goto-char (point-min))
+	  (while (re-search-forward to-find nil t)
+	    (replace-match val)))))
+    (buffer-string)))
 
-(cl-defun blog-command-index (posts-dir template-file)
+(cl-defun blog-command-index (posts-dir template-index template-listing)
   "Generates the blog index page."
-  (let* ((posts (avl-tree-mapcar
-                 #'index-post-entry
-                 (sorted-posts posts-dir (complement #'post-before?)))))
+  (let* ((posts (mapcar
+		 (apply-partially #'fill-template template-listing)
+                 (reverse (posts posts-dir)))))
     (with-temp-buffer
-      (insert-file-contents-literally template-file)
+      (insert-file-contents-literally template-index)
       (unless (re-search-forward "\\$posts\\$" nil t)
         (error "Couldn't find $posts$ variable in index template."))
-      (replace-match (mapconcat #'render-html posts ""))
+      (replace-match (apply #'concat posts))
       (buffer-string))))
 
 (cl-defun blog-command-atom
@@ -154,7 +152,7 @@ posts-dir and the metadata in the posts."
      entry-baseurl)
   "Generates the Atom feed."
   (let* ((feed-updated (format-time-string "%FT%TZ" nil t))
-         (entries (avl-tree-mapcar
+         (entries (mapcar
                    (lambda (entry)
                      `(entry ()
                        (title () ,(alist-get 'title entry))
@@ -162,7 +160,7 @@ posts-dir and the metadata in the posts."
                        (id () ,(alist-get 'id entry))
                        (updated () ,(alist-get 'iso-date entry))
                        (summary () ,(alist-get 'abstract entry))))
-                   (sorted-posts posts-dir #'post-before?))))
+                   (posts posts-dir))))
     (concat "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
             (render-html
              `(feed ((xmlns . "http://www.w3.org/2005/Atom"))

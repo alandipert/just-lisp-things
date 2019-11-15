@@ -21,8 +21,8 @@ all: public
 atom.xml: $(POSTS_MD) scripts/gen.el
 	$(GEN) atom "posts" $(TITLE) $(AUTHOR) $(BLOG_URL) $(FEED_ID) $(POST_BASE_URL) > $@
 
-index.html: templates/index.html $(POSTS_HTML) scripts/gen.el
-	$(GEN) index "posts" $< > $@
+index.html: templates/index.html templates/listing.html $(POSTS_HTML) scripts/gen.el
+	$(GEN) index "posts" templates/index.html templates/listing.html > $@
 
 %.html: %.md templates/article.html scripts/gen.el
 	$(GEN) post $< > $@
