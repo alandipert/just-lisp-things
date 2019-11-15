@@ -80,7 +80,7 @@ returns the result of body."
 
 (cl-defun posts (posts-dir)
   "Returns a list of alists of post metadata, in chronological order."
-  (cl-sortn
+  (cl-sort
    (mapcar (lambda (post)
 	     (let* ((md-path (concat (file-name-as-directory posts-dir) post))
 		    (meta (json-read-from-string (blog-command-meta-json md-path)))
