@@ -1,5 +1,5 @@
 ---
-date: "2019-12-07"
+date: "2019-12-11"
 keywords: ["LOOP", "collect", "lists"]
 title: "Collecting without LOOP"
 id: "urn:uuid:29175a02-069e-11ea-b588-843a4b7c6000"
