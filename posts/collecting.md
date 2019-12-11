@@ -159,13 +159,13 @@ constructs [`DO`][do] or [`DOTIMES`][dotimes]:
 
 ## Other observations and considerations
 
-* I was motivated to write this post after writing a [depth-first topological sort](https://gist.github.com/alandipert/af7093ef1719ddc736ee5deb37748b04). The algorithm naturally yielded results in reverse of the order I wanted, so I replaced my use of a list as a stack with `COLLECTOR`. I could also have reversed the stack before returning it, but I wanted to avoid the performance penalty.
+* I was motivated to write this post after writing a [depth-first topological sort](https://gist.github.com/alandipert/af7093ef1719ddc736ee5deb37748b04). The algorithm naturally yielded results in reverse of the order I wanted, so I replaced my use of a list as a stack with `COLLECTOR`. I could also have reversed the stack before returning it, but I wanted to avoid the performance penalty. My topological sort has a lot of room for improvement; in the future, I might use a proper [queue][queue] to store the result.
 * I briefly noted why we needed `funcall` but that's a huge topic. If
 you're coming from another Lisp or otherwise up for a deep dive, check out
 [Technical Issues of Separation in Function Cells and Value
 Cells](https://www.dreamsongs.com/Separation.html).
 * I used [SETF][setf] to update the car of a cons cell without explaining it, but it's CL's generalized assignment operator and explained very well in [Practical Common Lisp][pcl-variables]. Alternatively, [`RPLACA` and `RPLACD`][rplaca-rplacd] could have been used to mutate conses.
-* It's amazing how much mileage you can get out of the humble mutable cons cell!
+* It's incredible how much mileage you can get out of the humble, mutable cons cell! In a previous life I was a full-time [Clojure][clojure] programmer, a language with a rich set of efficient immutable structures, including an immutable vector that can be efficiently appended to. But as I work to implement my own new JavaScript-based Common Lisp, I have nurtured a sensitivity to how much runtime code and implementation complexity is necessary to support programming with immutable trees. I've enjoyed learning the mechanics of wanton imperative cons manipulation, building little machines like `COLLECTOR`. I've found it worth learning both styles, if only to be able to be conscious of the associated tradeoffs.
 
 [weinreb-loop]: http://www.paulgraham.com/loop.html
 [DSL]: https://en.wikipedia.org/wiki/Domain-specific_language
@@ -182,3 +182,4 @@ Cells](https://www.dreamsongs.com/Separation.html).
 [rplaca-rplacd]: http://clhs.lisp.se/Body/f_rplaca.htm
 [funcall]: http://www.lispworks.com/documentation/HyperSpec/Body/f_funcal.htm
 [setf]: http://www.lispworks.com/documentation/HyperSpec/Body/m_setf_.htm
+[clojure]: https://clojure.org
