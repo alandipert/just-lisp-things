@@ -1,76 +1,44 @@
 ---
-date: "2019-12-12"
+date: "2019-12-26"
 keywords: ["LOOP", "collect", "lists", "macros"]
 title: "Collecting without LOOP: Macro Edition"
 id: "urn:uuid:a2d4ab9a-1c99-11ea-a6e0-843a4b7c6000"
 abstract: |
-  Implementing COLLECTING with a macro interface instead of a function.
+  Implementing COLLECTING with a macro interface instead of as a function.
 ---
 
 In a [previous post](collecting.html), I professed my fondness for the
 [LOOP][loop] macro and introduced something like its `collect` keyword
 delivered as a function called `COLLECTOR`.
 
-`COLLECTOR` was cool, but I forgot to mention one big disadvantage of
-`COLLECTOR` compared to `collect`: function call overhead.
+`COLLECTOR` was cool. Maybe the coolest thing about it was that the
+function returned by `COLLECTOR` could be passed as an argument to
+other functions. But that's a pretty obscure affordance that I think
+is overshadowed by two unfortunate characteristics:
 
-In this post, we'll survey a few tools Common Lisp provides that can
-be used to eliminate function call overhead, and use them to concoct a
-new, [macro][macro]-based collecting contraption: `WITH-COLLECT`.
+1. Syntax: Usage syntax is clouded by [`FUNCALL`][funcall]
+1. Performance: Collecting incurs the overhead of a function call
 
-## Wait, function calls are slow?
+The syntax problem is subjective. Maybe you don't mind seeing
+`FUNCALL` here and there. The performance problem is also subjective;
+your Lisp implementation might inline the collecting function, or you
+just might not care.
 
-Well, no, but there is some overhead associated with a function
-call. Usually, at a minimum:
+But my treatment of the problem wouldn't be complete without
+suggesting an approach that addressed the potential syntax and
+performance problems. That approach, of course, is the one involving
+[macros][pcl-macros].
 
-1. The function reference must be resolved
-1. A stack frame must be allocated
-1. Arguments must be copied to the stack
+## A Macro-based API
 
-One way that a compiler can optimize away the overhead of a function
-call is by _inlining_ the function. That's the process of replacing
-the place where a function is called, the [call site][call-site], with
-the implementation of the function.
+`COLLECTOR` had a functional API, in the sense that it returned a
+function. As a return value, the returned function could not be called
+like a conventional Lisp operator; `FUNCALL` was necessary.
 
-Of course, functions are such a powerful tool that in most cases,
-their overhead is well worth it. We're interested in inlining here
-only because as library authors we want the collecting operation to be
-as fast as possible, and because the use-case we have in mind &mdash;
-collecting values in a single lexical block of code &mdash; doesn't
-strictly require an actual function to exist.
-
-Honestly, I'm not really used to thinking too much about function call
-overhead.[^r] Much of my professional programming experience has been
-with the JVM and JavaScript, two platforms with optimizing [tracing
-JIT][jit] compilers that do all kinds of optimization for you,
-including automatically inlining. As programs on these platforms run,
-they are continually analyzed and recompiled in order to run faster.
-
-
-## Inlining and CL
-
-Common Lisp was specified before tracing JITs were a thing, but it
-does have pervasive facilities for all kinds of _static_ optimization
-strategies, including inlining. Mechanisms supporting inlining
-directly or indirectly that I'm aware of include:
-
-* Macros ([`DEFMACRO`][defmacro], [`MACROLET`][macrolet])
-* Compiler macros ([`DEFINE-COMPILER-MACRO`][cmacro])
-* The [`INLINE`][inline] [declaration][declare]
-
-Here's an example showing the functional way, `COLLECTOR`, compared to
-what I have in mind with `WITH-COLLECT`. Both expressions evaluate to
-`(2 4 6 8 10)`:
+With macros, however, it's possible to support operator syntax. Here's
+what I have in mind:
 
 ~~~{.lisp}
-;; with COLLECTOR from previous post
-(let ((collect (collector)))
-  (dotimes (i 10 (funcall collect))
-    (let ((i (+1 i)))
-      (when (evenp i)
-        (funcall collect i)))))
-      
-;; with WITH-COLLECT, which we haven't implemented yet
 (with-collect collect
   (dotimes (i 10)
     (let ((i (1+ i)))
@@ -78,58 +46,90 @@ what I have in mind with `WITH-COLLECT`. Both expressions evaluate to
         (collect i)))))
 ~~~
 
-In this post, we'll address the function call overhead question with a
-new, [macro][macro]-based collecting contraption, `WITH-COLLECT`. But
-before we do, let's establish some context, and get into background on
-stuff like tracing JITs and Common Lisp's tools for inlining
-statically.
+* `WITH-COLLECT` is the name of the macro. Its first argument &mdash;
+  `COLLECT` &mdash; is a symbol, the name to use for the collecting
+  operator within the context of the body.
+* `COLLECT` is called like a function.
+* Instead of calling `COLLECT` with no arguments to return the list
+  head, `WITH-COLLECT` evaluates to the head of the collected list.
 
-## Tracing JITs
+## Implementation
 
-Honestly, I'm not really used to thinking too much about function call
-overhead.[^r] Much of my professional programming experience has been
-with the JVM and JavaScript, two platforms with optimizing [tracing
-JIT][jit] compilers that do all kinds of optimization for you,
-including optimizing function calls. As programs on these platforms
-run, they are continually analyzed and recompiled in order to run
-faster.
+~~~{.lisp}
+(defmacro with-collect (collect-name &body body)
+  (let ((head (gensym "head"))
+        (tail (gensym "tail")))
+    `(let ((,head nil)
+           (,tail nil))
+       (macrolet ((,collect-name (item)
+                     `(cond
+                       ((null ,',tail)
+                        (setq ,',tail (cons ,item nil)
+                              ,',head ,',tail))
+                        (t (let ((new-tail (cons ,item nil)))
+                             (setf (cdr ,',tail) new-tail
+                                   ,',tail new-tail))))))
+         ,@body
+         ,head))))
+~~~
 
-One key JIT optimization, _inlining_, involves the replacement of
-frequent function calls with the functions' implementations. This
-saves allocating a stack frame and possibly other work, such as
-copying arguments, and can make a big difference in a "hot loop".
+Like `COLLECTOR`, code for maintaining the tail of the list is in
+there. Unlike `COLLECTOR`, that code now lives in a macro instead of a
+function.
 
-If the called function is updated by the user, the inlined version of
-the [call site][call-site] becomes invalid, and is replaced with a new
-version that again calls the function.
+In particular, the operative code is inside the body of a local macro
+defined by [`MACROLET`][macrolet]. Like a normal macro defined via
+[`DEFMACRO`][defmacro], `MACROLET` is a way to replace occurrences of
+operator calls with arbitrary code. But unlike `DEFMACRO`, definitions
+created by `MACROLET` are _local_ and not _global_: they are only
+usable within the specified lexical extent.
 
-Tracing JITs are really cool.[^jit] They make a lot of code run a lot
-faster automatically, which probably saves us all a lot of
-time. There's at least one downside, though: you can't count on what
-the JIT's going to do with your code at runtime. You have to do your
-best to make sure your program will be fast enough without it, and
-then hope to be pleasantly surprised when the JIT kicks in.
+The pickle with `WITH-COLLECT` is we needed to parameterize the name
+of the macro defined by `MACROLET` &mdash; we wanted to give the user
+the ability to pick their own name for the collecting operator.
 
-## Inlining and CL
+We also need to parameterize the body of the `MACROLET`; we want the
+user to supply the code within which the `MACROLET` will apply.
 
-Common Lisp was specified before tracing JITs were a thing, but it
-does have pervasive facilities for all kinds of _static_ optimization
-strategies, including inlining. Mechanisms supporting inlining
-directly or indirectly that I'm aware of include:
+The way to parameterize any syntax, even that of `MACROLET`, is with a
+macro. So, we wrap everything in a `DEFMACRO` that accepts the
+`COLLECT-NAME` and `BODY` arguments.
 
-* Macros ([`DEFMACRO`][defmacro], [`MACROLET`][macrolet])
-* Compiler macros ([`DEFINE-COMPILER-MACRO`][cmacro])
-* The [`INLINE`][inline] [declaration][declare]
+One thing that might stick out to you is the peculiar `,',`
+syntax. What's happening is, the presence of two backticks (one macro
+is producing another) makes two levels of unquoting necessary. Since
+the innermost unquote yields a symbol, it must be wrapped in a quote
+to prevent its evaluation as a value.
+
+## Trade-offs
+
+I think it's fair to say that we simplified the API, because the
+entire expression now evaluates to the collected list. The collection
+operation now also looks like a function call and is not obscured by
+`FUNCALL`.
+
+Code size is larger, because every occurrence of the user-named
+collecting operator now expands to the collection operation code
+instead of being a function call.
+
+I like it though. All things considered, I think I generally prefer
+something like `WITH-COLLECT` to `COLLECTING`.
+
+## Further reading
+
+There's a [COLLECTING entry on CLiki][collecting-clwiki] with a bunch
+of pointers to other macro implementations.
+
+The _Code-Walking with Macrolet_ section of [Chapter 5 of Let Over
+Lambda][lol] is a nice treatment of `MACROLET`. As far as I can tell,
+the most common use of `MACROLET` is inside `DEFMACRO`s in order to
+support a global macro's operator semantics.
 
 [loop]: http://www.lispworks.com/documentation/HyperSpec/Body/m_loop.htm
-[jit]: https://en.wikipedia.org/wiki/Tracing_just-in-time_compilation
-[call-site]: https://en.wikipedia.org/wiki/Call_site
-[macro]: http://www.gigamonkeys.com/book/macros-defining-your-own.html
-[defmacro]: http://www.lispworks.com/documentation/HyperSpec/Body/m_defmac.htm#defmacro
-[macrolet]: http://www.lispworks.com/documentation/HyperSpec/Body/s_flet_.htm
-[cmacro]: http://www.lispworks.com/documentation/HyperSpec/Body/m_define.htm
+[funcall]: http://www.lispworks.com/documentation/HyperSpec/Body/f_funcal.htm
+[pcl-macros]: http://www.gigamonkeys.com/book/macros-defining-your-own.html
 [inline]: http://www.lispworks.com/documentation/HyperSpec/Body/d_inline.htm
-[declare]: http://www.lispworks.com/documentation/HyperSpec/Body/s_declar.htm#declare
-
-[^r]: Except when I use [R](http://adv-r.had.co.nz/Performance.html#language-performance)
-[^jit]: One of the first papers about JITs (and one of the few I've read...) is [this one](https://people.cs.umass.edu/~emery/classes/cmpsci691s-fall2004/papers/bala00dynamo.pdf) about "Dynamo", a JIT developed at HP Labs around the year 2000. On the surface, Dynamo was a [PA-8000 CPU](https://en.wikipedia.org/wiki/PA-8000) emulator, but actually it was an optimizing JIT compiler. The craziest thing I remember from the paper is them mentioning that one of their test programs ran faster _on_ Dynamo, _on_ the PA-8000 than it did _directly_ on the PA-8000. 
+[macrolet]: http://www.lispworks.com/documentation/HyperSpec/Body/s_flet_.htm
+[defmacro]: http://www.lispworks.com/documentation/HyperSpec/Body/m_defmac.htm#defmacro
+[collecting-clwiki]: https://www.cliki.net/COLLECTING
+[lol]: https://letoverlambda.com/textmode.cl/guest/chap5.html
