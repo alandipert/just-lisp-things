@@ -7,10 +7,13 @@ body {
   padding: 0 10px
 }
 
-h1,
-h2,
-h3 {
+h1 {
   font-family: 'Exo', sans-serif;
   line-height: 1.2;
   color: #99021d;
+}
+
+h2,
+h3 {
+  line-height: 1.2;
 }
